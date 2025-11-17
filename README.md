@@ -91,7 +91,11 @@ If you see an error like:
 ```bash
 python: command not found
 # or
-'python' is not recognized as an internal or external command use 'python3' instead of python
+'python' is not recognized as an internal or external command 
+
+#use 
+'python3' instead of 'python'
+```
 ---
 
 ## Architecture Overview
