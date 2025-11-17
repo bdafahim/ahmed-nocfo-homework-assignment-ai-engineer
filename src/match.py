@@ -23,7 +23,7 @@ def find_attachment(
     best_attachment: Optional[Attachment] = None
 
     for att in attachments:
-        score = _score_pair(transaction, att)
+        score = _compute_match_score(transaction, att)
         # Find the highest-scoring candidate,
         if score > best_score:
             best_score = score
@@ -51,7 +51,7 @@ def find_transaction(
     best_transaction: Optional[Transaction] = None
 
     for tx in transactions:
-        score = _score_pair(tx, attachment)
+        score = _compute_match_score(tx, attachment)
         # Find the highest-scoring candidate,
         if score > best_score:
             best_score = score
@@ -81,13 +81,13 @@ def _normalize_reference_value(ref: Optional[str]) -> Optional[str]:
     """
     if not ref:
         return None
-    s = str(ref).upper()
-    s = s.replace(" ", "")
-    if s.startswith("RF"):
-        s = s[2:]
+    normalized_ref = str(ref).upper()
+    normalized_ref = normalized_ref.replace(" ", "")
+    if normalized_ref.startswith("RF"):
+        normalized_ref = normalized_ref[2:]
     # Strip leading zeros
-    s = s.lstrip("0")
-    return s or None
+    normalized_ref = normalized_ref.lstrip("0")
+    return normalized_ref or None
 
 
 def _parse_date(value: Optional[str]) -> Optional[date]:
@@ -110,9 +110,9 @@ def _attachment_dates(att: Attachment) -> List[date]:
     data = att.get("data", {}) or {}
     dates: List[date] = []
     for key in ("invoicing_date", "due_date", "receiving_date"):
-        d = _parse_date(data.get(key))
-        if d:
-            dates.append(d)
+        parsed_date = _parse_date(data.get(key))
+        if parsed_date:
+            dates.append(parsed_date)
     return dates
 
 
@@ -120,8 +120,8 @@ def _normalize_name(name: Optional[str]) -> Optional[str]:
     """Normalize a name for comparison: lowercase and strip extra spaces."""
     if not name:
         return None
-    s = " ".join(str(name).strip().lower().split())
-    return s or None
+    normalized_name = " ".join(str(name).strip().lower().split())
+    return normalized_name or None
 
 
 def _attachment_counterparty_names(att: Attachment) -> List[str]:
@@ -170,58 +170,99 @@ def _name_similarity_score(contact: Optional[str], att: Attachment) -> int:
         # Treat as neutral instead of explicit mismatch.
         return 0
 
-    for c in candidates:
-        if norm_contact == c:
+    for candidate in candidates:
+        if norm_contact == candidate:
             return 2
-        if norm_contact in c or c in norm_contact:
+        if norm_contact in candidate or candidate in norm_contact:
             return 1
 
     return -1  # explicit mismatch when we have info on both sides
 
 
-def _score_pair(transaction: Transaction, attachment: Attachment) -> float:
+def _compute_amount_base_score(transaction: Transaction, attachment: Attachment) -> Optional[float]:
     """
-    Compute a heuristic score for how well this transaction matches this attachment,
-    using amount, date and counterparty name.
+    Validate that both sides have a compatible amount and return the
+    base score contributed by the amount signal.
 
-    Assumes there is NO reference match (reference matches are handled separately).
+    Returns:
+        - 10.0 if the absolute amounts match within a small tolerance
+        - None if amounts are missing or inconsistent, meaning the
+          candidate should be rejected
     """
-    data: Dict[str, Any] = attachment.get("data", {}) or {}
-
+    data = attachment.get("data", {}) or {}
     tx_amount = transaction.get("amount")
     att_amount = data.get("total_amount")
 
-    # Amount must exist and match in absolute value
     if tx_amount is None or att_amount is None:
-        return 0.0
+        return None
 
+    # Compare absolute values to handle negative/positive signs
     if abs(abs(tx_amount) - abs(att_amount)) > 0.01:
+        return None
+
+    return 10.0
+
+
+def _compute_date_bonus_score(transaction: Transaction, attachment: Attachment) -> Optional[float]:
+    """
+    Compute an additional score based on how close the transaction date
+    is to the relevant dates on the attachment (invoicing, due, receiving).
+
+    Returns:
+        - A non-negative float in [0, 10] representing the date-based bonus
+        - 0.0 if there is not enough date information to use (no penalty)
+        - None if dates are too far apart (> 30 days), meaning the
+          candidate should be rejected
+    """
+    tx_date = _parse_date(transaction.get("date"))
+    attachment_dates = _attachment_dates(attachment)
+
+    if not tx_date or not attachment_dates:
+        # No usable date information on one or both sides: neutral
         return 0.0
 
-    # Base score for amount match
-    score = 10.0
+    day_differences = [abs((tx_date - attachment_date).days) for attachment_date in attachment_dates]
+    min_difference_in_days = min(day_differences)
 
-    # Date proximity
-    tx_date = _parse_date(transaction.get("date"))
-    att_dates = _attachment_dates(attachment)
+    # If dates are too far apart, do not consider this a confident match
+    if min_difference_in_days > 30:
+        return None
 
-    if tx_date and att_dates:
-        diffs = [abs((tx_date - d).days) for d in att_dates]
-        min_diff = min(diffs)
-        # If dates are too far apart, do not consider this a confident match
-        if min_diff > 30:
-            return 0.0
-        # Smaller difference -> larger bonus, capped at 10
-        date_score = max(0.0, 10.0 - float(min_diff))
-        score += date_score
+    # Smaller difference -> larger bonus, capped at 10
+    return max(0.0, 10.0 - float(min_difference_in_days))
 
-    # Counterparty name similarity
+
+def _compute_match_score(transaction: Transaction, attachment: Attachment) -> float:
+    """
+    Compute a heuristic score for how well this transaction matches this attachment,
+    using three signals:
+      - Amount (required, acts as a hard filter and base score)
+      - Date proximity (optional bonus, can also reject if too far)
+      - Counterparty name similarity (optional bonus, can also reject on conflict)
+
+    Assumes there is NO reference match (reference matches are handled separately).
+    """
+    # 1) Amount: hard requirement + base score
+    amount_score = _compute_amount_base_score(transaction, attachment)
+    if amount_score is None:
+        return 0.0
+
+    score = amount_score
+
+    # 2) Date proximity: bonus if close, rejection if too far
+    date_bonus_score = _compute_date_bonus_score(transaction, attachment)
+    if date_bonus_score is None:
+        return 0.0
+    score += date_bonus_score
+
+    # 3) Counterparty name similarity
     name_score = _name_similarity_score(transaction.get("contact"), attachment)
     if transaction.get("contact") and name_score < 0:
         # We know the contact and it explicitly conflicts with all candidate names
         return 0.0
 
-    score += float(name_score) * 5.0  # give strong weight to names when present
+    # Scale name similarity (2, 1, 0) to a meaningful range (+10, +5, 0)
+    score += float(name_score) * 5.0
 
     return score
 
