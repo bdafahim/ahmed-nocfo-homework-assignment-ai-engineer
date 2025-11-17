@@ -1,81 +1,203 @@
-# NOCFO Homework Assignment - AI Engineer
+# NoCFO Homework Assignment – AI Engineer
 
-> [!NOTE]
-> We recommend spending **no more than 6 hours** on this task. Focus on the essentials – a functional and clear implementation is more important than perfection.
-
-## Objective
-
-Your task is to write logic for matching bank transactions with potential attachments (receipts, invoices). In accounting, every transaction on a bank account must have an attachment as supporting evidence, so this is a real-world problem. The logic you implement must work in both directions. You will write two functions—`find_attachment` and `find_transaction`—and your goal is to fill in their implementations in `src/match.py`. Treat this repository as your starter template: build directly on top of it so that `run.py` continues to work without modifications.
+This repository contains a matching engine that links bank transactions to their supporting attachments (invoices, receipts) using a combination of reference numbers and heuristic rules.
 
 ---
 
-## Starting point
+## Table of Contents
 
-You will receive a ready-made list of bank transactions and a list of attachments that have already been parsed and structured into JSON format. These JSON files can be found in the `/src/data` directory at the project root.
+- [How to Run](#how-to-run)
+- [Architecture Overview](#architecture-overview)
+- [Matching Logic](#matching-logic)
+  - [Reference Matching](#reference-matching)
+  - [Heuristic Scoring](#heuristic-scoring)
+- [Technical Decisions](#technical-decisions)
 
-Additionally, a file named `run.py` has been provided. This file calls the functions you are required to implement. Running this file will produce a report of the successfully matched pairs. You can run it using the following command:
+---
 
-```py
+## How to Run
+
+### Prerequisites
+
+- Python 3.10+
+- No external dependencies required beyond the standard library
+
+### Project Structure
+
+```text
+.
+├── run.py
+└── src
+    ├── match.py
+    └── data
+        ├── transactions.json
+        └── attachments.json
+```
+
+### Running the Matching Report
+
+From the project root:
+
+```bash
 python run.py
 ```
 
----
+This will:
+- Load fixture data from `src/data/transactions.json` and `src/data/attachments.json`
+- Call `find_attachment` and `find_transaction` from `src/match.py`
+- Print a report showing, for each transaction:
+  - The expected attachment
+  - The attachment found by the algorithm
+  - Whether they match (✅ / ❌)
+  - Similarly in the opposite direction (attachment → transaction)
 
-## What you need to implement
-
-- The matching logic lives in `src/match.py`. Implement the `find_attachment` and `find_transaction` functions there; do not modify `run.py`.
-- `find_attachment(transaction, attachments)` must return the single best candidate attachment for the provided transaction or `None` if no confident match exists.
-- `find_transaction(attachment, transactions)` must do the same in the opposite direction.
-- Use only the fixture data under `/src/data` and the helper report that `run.py` prints to guide your implementation.
-
----
-
-## What makes a good match?
-
-- A **reference number** match is always a 1:1 match. If a reference number match is found, the link should always be created.
-  - Note that there may be variations in the format of reference numbers. Leading zeros or whitespace within the reference number should be ignored during comparison.
-- **Amount**, **date**, and **counterparty** information are equally strong cues — but none of them alone are sufficient. Find a suitable combination of these signals to produce a confident match.
-  - Note that the spelling of the counterparty's name may vary in the bank statement. Also, the transaction date of an invoice payment rarely matches the due date exactly — it can vary. Sometimes invoices are paid late, or bank processing may take a few days. In other cases, people pay the invoice immediately upon receiving it instead of waiting until the due date.
-
-Keep in mind that the list of attachments includes not only receipts but also both purchase and sales invoices. Therefore, the counterparty may sometimes appear on the `recipient` field and other times on the `issuer` field.
-In receipt data, the merchant information can be found in the `supplier` field.
-
-The company whose bank transactions and attachments you are matching is **Example Company Oy**.
-If this entity is mentioned in an attachment, it always refers to the company itself.
+The implementation is fully deterministic, so rerunning `python run.py` with the same data always produces the same output.
 
 ---
 
-## Technical Requirements
+## Architecture Overview
 
-- The functionality is implemented using **Python**.
-- The `run.py` file must remain executable and must return an updated test report when run.
-- Your implementation should be deterministic: rerunning `python run.py` with the same data should yield the same matches every time.
+### Core Functions
 
----
+The matching logic is implemented in `src/match.py` and exposed via two main functions:
 
-## Submission
+```python
+find_attachment(transaction, attachments) -> Attachment | None
+find_transaction(attachment, transactions) -> Transaction | None
+```
 
-Submit your completed app by providing a link to a **public GitHub repository**. The repository must include:
+Both functions:
+1. First attempt a **reference-based match** (strongest signal)
+2. If no reference match is found, fall back to a **heuristic scoring model** that combines:
+   - Amount matching
+   - Date proximity
+   - Counterparty name similarity
 
-1. **Source code**: All files necessary to run the app.
-2. **README.md file**, containing:
+### Supporting Helpers
 
-   - Instructions to run the app.
-   - A brief description of the architecture and technical decisions.
-
-Email the link to the repository to **people@nocfo.io**. The email subject must include "Homework assignment". Good luck with the assignment! :)
-
----
-
-## Evaluation Criteria
-
-1. Matching Accuracy: The implemented heuristics produce reasonable and explainable matches with minimal false positives.
-2. Code Clarity: The logic is easy to read, well-structured, and includes clear comments or docstrings explaining the reasoning.
-3. Edge Case Handling: The implementation behaves predictably with missing data, ambiguous cases, and noisy inputs.
-4. Reusability & Design: Functions are modular and deterministic.
-5. Documentation & Tests: The README and test cases clearly describe the approach, assumptions, and demonstrate correctness.
+- `_normalize_reference_value` – Normalizes reference numbers for comparison
+- `_parse_date`, `_attachment_dates` – Date parsing and extraction
+- `_normalize_name`, `_attachment_counterparty_names` – Name normalization and extraction
+- `_name_similarity_score` – Computes name similarity
+- `_find_by_reference` – Reference-based lookup
+- `_score_pair` – Heuristic scoring function
 
 ---
 
-> [!IMPORTANT]
-> If you have technical challenges with completing the task, you can contact Juho via email at **juho.enala@nocfo.io**.
+## Matching Logic
+
+### Reference Matching
+
+**Goal:** Reference matches are always 1:1 and must be preferred when present.
+
+**Implementation:**
+
+Reference numbers are normalized by:
+- Converting to string
+- Uppercasing
+- Removing whitespace
+- Stripping leading "RF" (for RF references)
+- Stripping leading zeros
+
+If a normalized reference match is found between a transaction and attachment:
+- The match is immediately returned
+- Heuristic scoring is skipped
+
+**Rule:** *A reference number match is always a 1:1 match. If a reference number match is found, the link should always be created.*
+
+---
+
+### Heuristic Scoring
+
+When no reference match exists, the algorithm uses `_score_pair` to rate transaction–attachment pairs based on three signals:
+
+#### 1. Amount (Hard Requirement)
+
+- Both transaction and attachment **must** have an amount
+- Absolute values must match within tolerance (±0.01)
+- If amounts are missing or differ, the pair is rejected (`score = 0.0`)
+- Valid candidates receive a base score of **10.0**
+
+#### 2. Date Proximity (Bonus: 0–10 points)
+
+The algorithm:
+- Parses the transaction date
+- Collects relevant attachment dates:
+  - `invoicing_date`
+  - `due_date`
+  - `receiving_date` (for receipts)
+- Computes day differences and uses the smallest difference (`min_diff`)
+
+**Scoring rules:**
+- `min_diff > 30 days` → Pair rejected (`score = 0.0`)
+- Otherwise: `date_score = max(0, 10 - min_diff)`
+  - 0 days difference → +10
+  - 1 day → +9
+  - 9 days → +1
+  - 10–30 days → +0 (allowed but not boosted)
+
+This accommodates immediate payments, on-time payments, and slightly early/late payments.
+
+#### 3. Counterparty Name (Penalty/Bonus: −5 to +10 points)
+
+Counterparty information is extracted from:
+- `issuer`
+- `recipient`
+- `supplier` (merchant for receipts)
+
+**Normalization:**
+- Lowercase, trimmed, collapsed whitespace
+- Excludes "Example Company Oy" (refers to the company itself)
+
+**Similarity scoring (`_name_similarity_score`):**
+- **2** – Exact match (e.g., "jane smith")
+- **1** – Substring match (e.g., "jane doe" vs "jane doe design")
+- **0** – Neutral (no contact or no usable names)
+- **−1** – Explicit mismatch (both sides have names but incompatible)
+
+**Integration:**
+- If name score is −1 and transaction has a contact → Pair rejected
+- Otherwise: `score += name_score * 5.0`
+  - 2 → +10 (exact match)
+  - 1 → +5 (partial match)
+  - 0 → +0 (no information)
+
+---
+
+## Technical Decisions
+
+### Handling Missing, Ambiguous, and Noisy Data
+
+| Scenario | Behavior |
+|----------|----------|
+| **Missing reference** | Gracefully falls back to heuristics |
+| **Missing amount** | Candidate rejected (amount is required) |
+| **Missing dates** | Date bonus skipped |
+| **Missing names** | Name score neutral (0, no penalty) |
+| **Conflicting names** | Candidate rejected if transaction has contact |
+| **Ambiguous matches** | Only candidates with `score > 0.0` considered |
+
+**Conservative approach:**
+- Favors explainable matches
+- Minimizes false positives
+- Returns `None` when no confident match exists
+
+### Determinism
+
+The algorithm maintains `best_score` and `best_candidate`, updating only when:
+
+```python
+if score > best_score:
+    best_score = score
+    best_candidate = ...
+```
+
+**Result:**
+- If multiple candidates tie, the first one in input order is retained
+- Given fixed input lists, results are fully deterministic across runs
+
+---
+
+## License
+
+This project is provided as-is for evaluation purposes.
