@@ -7,7 +7,7 @@ This repository contains a matching engine that links bank transactions to their
 ## Table of Contents
 
 - [How to Run](#how-to-run)
-- [Running Tests](#running-tests)
+- [Running Tests](#running-unit-tests)
 - [Architecture Overview](#architecture-overview)
 - [Matching Logic](#matching-logic)
   - [Reference Matching](#reference-matching)
