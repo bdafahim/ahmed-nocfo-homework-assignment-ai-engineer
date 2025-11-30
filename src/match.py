@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 
-Attachment = dict[str, dict]
-Transaction = dict[str, dict]
+Attachment = dict[str, Any]
+Transaction = dict[str, Any]
 
 
 def find_attachment(
