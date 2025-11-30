@@ -291,20 +291,6 @@ if score > best_score:
 ## Temporal Integration
 In addition to the plain Python entry point (`run.py`), the same matching logic is exposed as a Temporal workflow for durable and observable execution. This is optional and mainly demonstrates how the matching engine can be run as a resilient background workflow.
 
-### Additional Prerequisites
-
-- Temporal CLI installed (`temporal --version` should work)
-- A local Temporal dev server running
-
-You can start the dev server with:
-```bash
-temporal server start-dev
-```
-
-By default this starts:
-- Temporal server on `localhost:7233`
-- Temporal Web UI on `http://localhost:8233` (namespace: `default`)
-
 ### Components
 
 #### `worker.py`
@@ -330,6 +316,39 @@ Small client script that:
 - Connects to the Temporal server at `localhost:7233`
 - Starts `MatchingWorkflow` with a unique workflow ID on `matching-task-queue`
 - Awaits completion and prints the resulting mappings
+
+### Additional Prerequisites
+
+- Temporal CLI installed
+- A local Temporal dev server running
+
+#### 1. Install Temporal CLI
+
+**macOS (Homebrew):**
+```bash
+brew install temporal
+```
+
+After installation, verify:
+```bash
+temporal --version
+```
+
+**Windows:**
+
+One simple option is to use `npm`:
+```bash
+npm install -g @temporalio/cli
+```
+
+Then verify:
+```bash
+temporal --version
+```
+
+(You can also use prebuilt binaries from Temporal's official releases if you prefer.)
+
+
 
 ### Running with Temporal
 
