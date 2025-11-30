@@ -13,7 +13,7 @@ This repository contains a matching engine that links bank transactions to their
   - [Reference Matching](#reference-matching)
   - [Heuristic Scoring](#heuristic-scoring)
 - [Technical Decisions](#technical-decisions)
-- [Temporal Integration](#temporal-integration-optional)
+- [Temporal Integration](#temporal-integration)
 - [License](#license)
 
 ---
