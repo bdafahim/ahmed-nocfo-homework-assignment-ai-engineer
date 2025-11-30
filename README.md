@@ -13,6 +13,7 @@ This repository contains a matching engine that links bank transactions to their
   - [Reference Matching](#reference-matching)
   - [Heuristic Scoring](#heuristic-scoring)
 - [Technical Decisions](#technical-decisions)
+- [Temporal Integration](#temporal-integration-optional)
 - [License](#license)
 
 ---
@@ -28,14 +29,18 @@ This repository contains a matching engine that links bank transactions to their
 
 ```text
 .
-├── run.py
+├── run.py                     # CLI report using pure Python matching
+├── worker.py                  # Temporal Worker (runs activities)
+├── start_workflow.py          # Temporal client starter script
 ├── src
-│   ├── match.py
+│   ├── match.py               # Core matching logic (find_attachment / find_transaction)
+│   ├── temporal_activities.py # Temporal activities wrapping the core logic
+│   ├── temporal_workflows.py  # Temporal workflow orchestration
 │   └── data
-│       ├── transactions.json
-│       └── attachments.json
+│       ├── transactions.json  # Fixture transactions
+│       └── attachments.json   # Fixture attachments
 └── tests
-    └── test_match.py
+    └── test_match.py          # Unit tests (fixtures + edge cases)
 ```
 
 ### Running the Matching Report
@@ -282,6 +287,98 @@ if score > best_score:
 - Given fixed input lists, results are fully deterministic across runs
 
 ---
+
+## Temporal Integration
+In addition to the plain Python entry point (`run.py`), the same matching logic is exposed as a Temporal workflow for durable and observable execution. This is optional and mainly demonstrates how the matching engine can be run as a resilient background workflow.
+
+### Additional Prerequisites
+
+- Temporal CLI installed (`temporal --version` should work)
+- A local Temporal dev server running
+
+You can start the dev server with:
+```bash
+temporal server start-dev
+```
+
+By default this starts:
+- Temporal server on `localhost:7233`
+- Temporal Web UI on `http://localhost:8233` (namespace: `default`)
+
+### Components
+
+#### `worker.py`
+Starts a Temporal Worker on the task queue `matching-task-queue`. It registers two async activities:
+- `find_attachment_activity` – wraps `find_attachment`
+- `find_transaction_activity` – wraps `find_transaction`
+
+#### `src/temporal_activities.py`
+Contains the activity definitions that call the core matching functions from `match.py`.
+
+#### `src/temporal_workflows.py`
+Defines a `MatchingWorkflow` that:
+- Receives the full list of transactions and attachments as input
+- For each transaction, calls `find_attachment_activity`
+- For each attachment, calls `find_transaction_activity`
+- Returns a `MatchingResult` dataclass with:
+  - `tx_to_attachment: dict[int, int | None]`
+  - `attachment_to_tx: dict[int, int | None]`
+
+#### `start_workflow.py`
+Small client script that:
+- Loads the fixture JSON from `src/data`
+- Connects to the Temporal server at `localhost:7233`
+- Starts `MatchingWorkflow` with a unique workflow ID on `matching-task-queue`
+- Awaits completion and prints the resulting mappings
+
+### Running with Temporal
+
+From the project root:
+
+**1. Start Temporal dev server** (if not already running):
+```bash
+temporal server start-dev
+```
+
+**2. Start the Temporal worker** in a new terminal:
+```bash
+python worker.py
+# or
+python3 worker.py
+```
+
+The worker will log that it is listening on the task queue `matching-task-queue`.
+
+**3. Start the workflow** from another terminal:
+```bash
+python start_workflow.py
+# or
+python3 start_workflow.py
+```
+
+You should see output similar to:
+```text
+Started workflow with ID: matching-temporal-workflow-XXXXXXXX
+Workflow result:
+Transactions -> Attachments: { ... }
+Attachments -> Transactions: { ... }
+```
+
+**4. Inspect the workflow** in the Temporal Web UI:
+
+- Open `http://localhost:8233` in your browser
+- Select the `default` namespace
+- Locate the workflow by its ID (printed by `start_workflow.py`)
+
+You can see:
+- Full event history (workflow started, each activity invocation, workflow completed)
+- Inputs and outputs for each activity call
+- The final `MatchingResult` returned by the workflow
+
+This setup shows how the matching logic can be run as a durable, observable workflow, suitable for production environments where reliability and auditability are important.
+
+---
+
 
 ## License
 
